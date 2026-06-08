@@ -33,9 +33,8 @@ function shouldSkipNode(node) {
   while (el) {
     if (el.nodeType === Node.ELEMENT_NODE) {
       const tag = el.tagName.toLowerCase();
-      if (['code', 'pre', 'script', 'style', 'svg'].includes(tag)) return true;
+      if (['script', 'style', 'svg'].includes(tag)) return true;
       if (el.hasAttribute(TRANSLATED_ATTR)) return true;
-      if (el.closest && el.closest('code, pre, .shiki, [class*="language-"]')) return true;
     }
     el = el.parentElement || el.parentNode;
   }
@@ -99,29 +98,26 @@ function lookupTranslation(text) {
 
 /**
  * 递归收集所有可翻译文本节点，穿透 Shadow DOM + iframe
+ * @param {Node} root - 根节点
+ * @param {string} [mode='basic'] - 'basic'（跳过代码块）或 'full'（翻译所有文本）
  */
 function collectTextNodes(root = document.body) {
   const nodes = [];
 
   function traverse(node) {
-    // 如果是元素且有 shadowRoot，遍历其内部
     if (node.nodeType === Node.ELEMENT_NODE && node.shadowRoot) {
       traverse(node.shadowRoot);
     }
 
-    // 如果是 iframe，尝试进入其 contentDocument
     if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IFRAME') {
       try {
         const doc = node.contentDocument || node.contentWindow?.document;
         if (doc && doc.body) {
           traverse(doc.body);
         }
-      } catch (e) {
-        // 跨域 iframe，跳过
-      }
+      } catch (e) { /* 跨域 iframe */ }
     }
 
-    // 处理当前节点的子文本节点
     const walker = document.createTreeWalker(
       node.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? node : node,
       NodeFilter.SHOW_TEXT,
@@ -139,7 +135,6 @@ function collectTextNodes(root = document.body) {
       nodes.push(textNode);
     }
 
-    // 递归处理子元素（包括 slot 分发的内容）
     const children = node.nodeType === Node.ELEMENT_NODE
       ? node.children
       : node.childNodes;
@@ -155,30 +150,7 @@ function collectTextNodes(root = document.body) {
   return nodes;
 }
 
-// ─── API 翻译兜底 ────────────────────────────────────
-
-const GOOGLE_TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
-
-async function batchTranslate(texts, targetLang) {
-  if (!texts || texts.length === 0) return [];
-  try {
-    const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: targetLang, dt: 't', dj: '1' });
-    const url = `${GOOGLE_TRANSLATE_URL}?${params}`;
-    const formData = new URLSearchParams();
-    for (const t of texts) formData.append('q', t);
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: formData });
-    if (!res.ok) throw new Error(`API status ${res.status}`);
-    const data = await res.json();
-    return (data.sentences || []).filter(s => s.trans).map(s => s.trans);
-  } catch (e) {
-    console.warn('[shadcn-translator] API翻译失败:', e);
-    return [];
-  }
-}
-
-// ─── 翻译执行（混合模式） ──────────────────────────────
-
-async function translatePage(targetLang) {
+async function translatePageSingle(targetLang) {
   if (!targetLang) return { success: false, error: '未指定目标语言' };
 
   if (targetLang !== currentTargetLang || !dictionary) {
@@ -186,10 +158,9 @@ async function translatePage(targetLang) {
     loadDictionary(targetLang);
   }
 
-  const textNodes = collectTextNodes();
+  const textNodes = collectTextNodes(document.body);
   if (textNodes.length === 0) return { success: true, count: 0 };
 
-  // 去重
   const textMap = new Map();
   for (const node of textNodes) {
     const text = node.textContent.trim();
@@ -199,36 +170,11 @@ async function translatePage(targetLang) {
   }
 
   let appliedCount = 0;
-
-  // 第一轮：字典翻译
-  const dictMissed = [];      // 字典未命中的文本
-  const dictMissedMap = [];   // 对应的 [text, nodes] 对
-
   for (const [text, nodes] of textMap.entries()) {
     const translation = lookupTranslation(text);
     if (translation && translation !== text) {
       applyToNodes(nodes, text, translation);
       appliedCount++;
-    } else {
-      dictMissed.push(text);
-      dictMissedMap.push([text, nodes]);
-    }
-  }
-
-  // 第二轮：API 兜底（只翻译字典没找到的）
-  if (dictMissed.length > 0) {
-    try {
-      const apiResults = await batchTranslate(dictMissed, targetLang);
-      for (let i = 0; i < apiResults.length && i < dictMissedMap.length; i++) {
-        const [text, nodes] = dictMissedMap[i];
-        const translation = apiResults[i];
-        if (translation && translation !== text) {
-          applyToNodes(nodes, text, translation);
-          appliedCount++;
-        }
-      }
-    } catch (e) {
-      // API 失败不影响已有翻译
     }
   }
 
@@ -244,24 +190,6 @@ function applyToNodes(nodes, originalText, translation) {
     }
     node.textContent = translation;
   }
-}
-
-/**
- * 多阶段翻译：立即翻译 + 多次延迟重试，覆盖所有动态加载内容
- * 包括 iframe 内渲染、Shadow DOM 动态创建、慢加载 SPA 内容等
- */
-async function translatePageMultiPass(targetLang) {
-  const result1 = await translatePage(targetLang);
-
-  const delays = [500, 1500, 3000, 5000, 8000];
-
-  for (const delay of delays) {
-    setTimeout(async () => {
-      await translatePage(targetLang);
-    }, delay);
-  }
-
-  return result1;
 }
 
 // ─── 恢复原文 ────────────────────────────────────────
@@ -303,8 +231,8 @@ function observeElementAndShadow(el) {
     const shadowObs = new MutationObserver(() => {
       if (currentTargetLang && dictionary) {
         clearTimeout(translateTimeout);
-        translateTimeout = setTimeout(() => {
-          translatePage(currentTargetLang);
+          translateTimeout = setTimeout(() => {
+          translatePageSingle(currentTargetLang);
         }, 300);
       }
     });
@@ -332,7 +260,7 @@ function setupNavigationObserver() {
     observer = new MutationObserver(() => {
       if (currentTargetLang && dictionary) {
         clearTimeout(translateTimeout);
-        translateTimeout = setTimeout(() => translatePage(currentTargetLang), 300);
+        translateTimeout = setTimeout(() => translatePageSingle(currentTargetLang), 300);
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
@@ -384,10 +312,8 @@ function setupNavigationObserver() {
       }
     }
 
-    if (hasNewContent) {
-      // 同步翻译：MutationObserver 在微任务队列执行，比浏览器绘制还早
-      // 所以用户看到的直接就是翻译后的文本，看不到英文→中文的切换
-      translatePage(currentTargetLang);
+    if (hasNewContent && currentTargetLang && dictionary) {
+      translatePageSingle(currentTargetLang);
     }
   });
 
@@ -408,36 +334,23 @@ function onUrlMaybeChanged() {
   if (currentUrl !== lastUrl) {
     lastUrl = currentUrl;
     if (currentTargetLang && dictionary) {
-      setTimeout(() => {
-        translatePageMultiPass(currentTargetLang);
-      }, 300);
+      setTimeout(() => { translatePageSingle(currentTargetLang); updateToggleButton(true); }, 300);
     }
   }
 }
 
-// ─── 启动 ────────────────────────────────────────────
-
-async function loadAndAutoTranslate() {
-  try {
-    const result = await chrome.storage.sync.get('shadcn_translator_config');
-    const config = result.shadcn_translator_config || { enabled: false, targetLang: '' };
-    if (config.enabled && config.targetLang) {
-      setTimeout(() => {
-        translatePageMultiPass(config.targetLang);
-      }, 500);
-    }
-  } catch (e) { /* ignore */ }
-}
+// ─── 消息监听 ────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
     case 'translatePage':
-      translatePageMultiPass(request.targetLang)
-        .then((result) => sendResponse(result))
+      translatePageSingle(request.targetLang)
+        .then((result) => { sendResponse(result); if (result?.success) updateToggleButton(true); })
         .catch((error) => sendResponse({ success: false, error: error.message }));
       return true;
     case 'resetTranslation':
       sendResponse(resetTranslation());
+      updateToggleButton(false);
       break;
     case 'getStatus':
       sendResponse({ active: !!currentTargetLang, targetLang: currentTargetLang });
@@ -445,12 +358,123 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    setupNavigationObserver();
-    loadAndAutoTranslate();
+// ─── 导航栏语言切换按钮 ──────────────────────────────
+
+const TOGGLE_BTN_ID = 'shadcn-lang-toggle';
+
+let toggleBtn = null;
+let toggleInitialized = false;
+
+function injectToggleCSS() {
+  if (document.getElementById('shadcn-toggle-style')) return;
+  const style = document.createElement('style');
+  style.id = 'shadcn-toggle-style';
+  style.textContent = `
+    #shadcn-lang-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 6px;
+      border: none; background: transparent;
+      cursor: pointer; transition: all 0.15s; flex-shrink: 0;
+      color: var(--foreground, #18181b); opacity: 1;
+    }
+    #shadcn-lang-toggle svg { width: 16px; height: 16px; }
+    #shadcn-lang-toggle:hover { background: var(--accent, #f4f4f5); }
+  `;
+  document.head.appendChild(style);
+}
+
+function findThemeToggle() {
+  const allSpans = document.querySelectorAll('span.sr-only');
+  for (const span of allSpans) {
+    if (span.textContent === 'Toggle theme') {
+      return span.closest('button');
+    }
+  }
+  return null;
+}
+
+function ensureToggleInNav() {
+  if (!toggleBtn) return;
+  const themeBtn = findThemeToggle();
+  if (!themeBtn || !themeBtn.parentElement) return;
+  // 如果已经是 themeBtn 的前一个兄弟 → 无需操作
+  if (themeBtn.previousElementSibling === toggleBtn) return;
+  // 否则插入到 themeBtn 前面
+  themeBtn.parentElement.insertBefore(toggleBtn, themeBtn);
+}
+
+function initToggleButton() {
+  if (toggleInitialized) return;
+  toggleInitialized = true;
+  injectToggleCSS();
+
+  // 创建按钮（仅一次）
+  toggleBtn = document.createElement('button');
+  toggleBtn.id = TOGGLE_BTN_ID;
+  toggleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>
+  </svg>`;
+  toggleBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (currentTargetLang === 'zh-CN') {
+      resetTranslation();
+      updateToggleButton(false);
+      await chrome.storage.sync.set({ shadcn_translator_config: { enabled: false, targetLang: 'zh-CN' } });
+    } else {
+      await translatePageSingle('zh-CN');
+      updateToggleButton(true);
+      await chrome.storage.sync.set({ shadcn_translator_config: { enabled: true, targetLang: 'zh-CN' } });
+    }
   });
-} else {
-  setupNavigationObserver();
-  loadAndAutoTranslate();
+
+  // 恢复上次的翻译状态
+  chrome.storage.sync.get('shadcn_translator_config').then(result => {
+    const config = result.shadcn_translator_config || {};
+    if (config.enabled && config.targetLang === 'zh-CN') updateToggleButton(true);
+  }).catch(() => {});
+
+  // 立即尝试插入
+  ensureToggleInNav();
+
+  // 持久 DOM 监听：导航栏重渲染时自动恢复
+  const navObserver = new MutationObserver(ensureToggleInNav);
+  navObserver.observe(document.body, { childList: true, subtree: true });
+
+  // 兜底：头 30 秒每 500ms 检查一次（应对极慢渲染或 MutationObserver 漏触发）
+  let fallback = 0;
+  const fallbackTimer = setInterval(() => {
+    if (++fallback > 60) { clearInterval(fallbackTimer); return; }
+    ensureToggleInNav();
+  }, 500);
+}
+
+function updateToggleButton(isActive) {
+  if (!toggleBtn) return;
+  toggleBtn.classList.toggle('active', isActive);
+  toggleBtn.title = isActive ? '切换为英文' : '切换为中文';
+}
+
+// ─── 自动翻译（安装后自动执行） ──────────────────────
+
+async function autoTranslateOnLoad() {
+  // 等待页面稳定后自动翻译
+  await new Promise(r => setTimeout(r, 100));
+  await translatePageSingle('zh-CN');
+  updateToggleButton(true);
+  try {
+    await chrome.storage.sync.set({ shadcn_translator_config: { enabled: true, targetLang: 'zh-CN' } });
+  } catch (e) { /* ignore */ }
+}
+
+// ─── 启动 ────────────────────────────────────────────
+
+try {
+  const boot = () => { setupNavigationObserver(); initToggleButton(); autoTranslateOnLoad(); };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+} catch (e) {
+  console.error('[shadcn-translator] 启动失败:', e);
 }

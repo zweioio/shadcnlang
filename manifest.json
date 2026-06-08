@@ -7,20 +7,10 @@
     "storage"
   ],
   "host_permissions": [
-    "https://ui.shadcn.com/*",
-    "https://translate.googleapis.com/*"
+    "https://ui.shadcn.com/*"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "action": {
-    "default_popup": "popup/popup.html",
-    "default_title": "shadcn 翻译",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
+    "default_title": "shadcn 翻译器"
   },
   "content_scripts": [
     {
