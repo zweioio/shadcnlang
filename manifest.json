@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "shadcn/ui 翻译",
+  "version": "4.0.0",
+  "description": "shadcn/ui 中文翻译 - 字典 + API 混合翻译",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://ui.shadcn.com/*",
+    "https://translate.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "shadcn 翻译",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://ui.shadcn.com/*"],
+      "js": ["dict/zh-CN.js", "content/content.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

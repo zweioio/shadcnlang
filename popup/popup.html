@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 280px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      color: #18181b;
+      background: #ffffff;
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    /* 语言选择行 */
+    .lang-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .lang-label {
+      font-size: 10px;
+      font-weight: 500;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .btn-reset {
+      background: none;
+      border: none;
+      color: #a1a1aa;
+      cursor: pointer;
+      padding: 2px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .btn-reset:hover { color: #52525b; background: #f4f4f5; }
+    .btn-reset svg { width: 13px; height: 13px; }
+
+    /* 自定义下拉框 */
+    .select-container { position: relative; margin-bottom: 10px; }
+    .select-trigger {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; padding: 7px 10px;
+      background: #fff; border: 1px solid #d4d4d8; border-radius: 6px;
+      color: #18181b; font-size: 13px; cursor: pointer;
+      outline: none; transition: border-color 0.15s;
+    }
+    .select-trigger:hover { border-color: #a1a1aa; }
+    .select-trigger .value { flex: 1; text-align: left; }
+    .select-trigger .value.placeholder { color: #a1a1aa; }
+    .select-trigger .chevron {
+      width: 14px; height: 14px; color: #a1a1aa; flex-shrink: 0;
+      transition: transform 0.2s;
+    }
+    .select-trigger.open .chevron { transform: rotate(180deg); }
+
+    .select-menu {
+      position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px;
+      background: #fff; border: 1px solid #e4e4e7; border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08); z-index: 1000;
+      overflow: hidden; display: none;
+    }
+    .select-menu.open { display: block; }
+    .select-option {
+      padding: 8px 10px; font-size: 13px; color: #18181b;
+      cursor: pointer; transition: background 0.1s;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .select-option:hover { background: #f4f4f5; }
+    .select-option.selected { background: #eef2ff; color: #4f46e5; font-weight: 500; }
+    .select-option.selected::before {
+      content: ''; width: 10px; height: 10px; background: #6366f1;
+      border-radius: 50%; flex-shrink: 0;
+    }
+    .select-option:not(.selected)::before {
+      content: ''; width: 10px; height: 10px;
+      border: 1.5px solid #d4d4d8; border-radius: 50%;
+      flex-shrink: 0; box-sizing: border-box;
+    }
+
+    /* 翻译主按钮 */
+    .btn-translate {
+      width: 100%; padding: 10px; font-size: 13px; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer;
+      background: #6366f1; color: #fff; margin-bottom: 8px;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      transition: background 0.15s;
+    }
+    .btn-translate:hover { background: #5558e6; }
+    .btn-translate svg { width: 15px; height: 15px; }
+
+    /* 辅助按钮行 */
+    .actions { display: flex; gap: 6px; }
+    .actions .btn {
+      flex: 1; padding: 7px 10px; border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
+      transition: all 0.15s; border: none;
+    }
+    .actions .btn svg { width: 13px; height: 13px; }
+    .btn-auto {
+      background: #fff; color: #52525b; border: 1px solid #d4d4d8 !important;
+    }
+    .btn-auto:hover { background: #f4f4f5; }
+    .btn-auto.active {
+      background: #6366f1; color: #fff; border-color: #6366f1 !important;
+    }
+    .btn-auto.active:hover { background: #5558e6; }
+    .btn-stop {
+      background: #fef2f2; color: #dc2626; border: 1px solid #fecaca !important;
+    }
+    .btn-stop:hover { background: #fee2e2; }
+
+    /* 状态提示 */
+    .status-bar {
+      min-height: 18px; font-size: 10px; color: #a1a1aa;
+      text-align: center; margin-top: 6px;
+    }
+    .status-bar.success { color: #16a34a; }
+    .status-bar.error { color: #dc2626; }
+    .status-bar.loading { color: #6366f1; }
+  </style>
+</head>
+<body>
+
+  <!-- 语言选择 -->
+  <div class="lang-row">
+    <span class="lang-label">目标语言</span>
+    <button class="btn-reset" id="resetInline" title="恢复原文">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+      </svg>
+    </button>
+  </div>
+  <div class="select-container">
+    <div class="select-trigger" id="langTrigger" tabindex="0" role="combobox" aria-expanded="false">
+      <span class="value placeholder" id="langValue">选择语言...</span>
+      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </div>
+    <div class="select-menu" id="langMenu" role="listbox"></div>
+  </div>
+
+  <!-- 翻译按钮 -->
+  <button class="btn-translate" id="translateBtn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/>
+      <path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>
+    </svg>
+    翻译此页
+  </button>
+
+  <!-- 辅助按钮 -->
+  <div class="actions">
+    <button class="btn btn-auto" id="autoBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      自动
+    </button>
+    <button class="btn btn-stop" id="stopBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>
+      </svg>
+      关闭翻译
+    </button>
+  </div>
+
+  <div class="status-bar" id="statusBar"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
