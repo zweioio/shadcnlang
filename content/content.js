@@ -281,14 +281,14 @@ function observeElementAndShadow(el) {
 
 function setupNavigationObserver() {
   if (isInIframe) {
-    // iframe 内只监听 DOM 变化，不拦截导航
+    // iframe 内监听 DOM + 文本变化
     observer = new MutationObserver(() => {
       if (currentTargetLang && dictionary) {
         clearTimeout(translateTimeout);
         translateTimeout = setTimeout(() => translatePageSingle(currentTargetLang), 300);
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     return;
   }
 
@@ -311,38 +311,38 @@ function setupNavigationObserver() {
     onUrlMaybeChanged();
     if (!currentTargetLang || !dictionary) return;
 
-    let hasNewContent = false;
-    // 检查是否有新元素（包括带 shadow root 的）
+    let shouldTranslate = false;
     for (const mutation of mutations) {
+      // 文本内容变更（如 "Copy" → "Copied"）
+      if (mutation.type === 'characterData') {
+        shouldTranslate = true;
+        break;
+      }
+      // 新元素添加
       if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
         for (const node of mutation.addedNodes) {
           if (node.nodeType === Node.ELEMENT_NODE) {
             const tag = node.tagName?.toLowerCase();
             if (tag && !['script', 'style', 'link'].includes(tag)) {
-              hasNewContent = true;
-              // 如果新节点有 shadow root，监听它
-              if (node.shadowRoot) {
-                observeElementAndShadow(node);
-              }
-              // 也检查新节点内部的 shadow roots
+              shouldTranslate = true;
+              if (node.shadowRoot) observeElementAndShadow(node);
               for (const child of node.querySelectorAll('*')) {
-                if (child.shadowRoot) {
-                  observeElementAndShadow(child);
-                }
+                if (child.shadowRoot) observeElementAndShadow(child);
               }
               break;
             }
           }
         }
+        if (shouldTranslate) break;
       }
     }
 
-    if (hasNewContent && currentTargetLang && dictionary) {
+    if (shouldTranslate && currentTargetLang && dictionary) {
       translatePageSingle(currentTargetLang);
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
   // 扫描页面上已有的 shadow roots
   setTimeout(() => {

@@ -2815,7 +2815,8 @@ const SHADCN_DICT_ZH_CN = {
     "Your team": "您的团队",
     "Your workspace": "您的工作区",
     "dark mode": "深色模式",
-    "light mode": "浅色模式"
+    "light mode": "浅色模式",
+    "Copied!": "已复制！"
   },
   "common": {
     "Search": "搜索",
