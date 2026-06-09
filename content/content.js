@@ -316,6 +316,15 @@ function setupNavigationObserver() {
       // 文本内容变更（如 "Copy" → "Copied"）
       if (mutation.type === 'characterData') {
         shouldTranslate = true;
+        // 清除翻译标记，否则该节点会被 shouldSkipNode 跳过
+        let el = mutation.target.parentElement || mutation.target.parentNode;
+        while (el && el.nodeType === Node.ELEMENT_NODE) {
+          if (el.hasAttribute(TRANSLATED_ATTR)) {
+            el.removeAttribute(TRANSLATED_ATTR);
+            el.removeAttribute(ORIGINAL_TEXT_ATTR);
+          }
+          el = el.parentElement;
+        }
         break;
       }
       // 新元素添加
