@@ -9,7 +9,7 @@
 - **术语准确** — 技术词汇人工审校，比机器翻译更准确
 - **导航栏切换** — 页面顶部导航栏有 🌐 语言图标，点击即可切换中/英文
 - **深色模式适配** — 图标颜色自动跟随网站主题色
-- **海量字典** — 内置 **2000+** 条翻译条目，覆盖全部文档页面
+- **海量字典** — 内置 **3000+** 条翻译条目，覆盖全部文档页面
 
 ## 📦 安装
 
@@ -28,7 +28,7 @@
 
 ## 🗺️ 翻译覆盖范围
 
-字典 **2000+ 条**，覆盖：
+字典 **3000+ 条**，覆盖：
 
 - ✅ 顶部导航栏 & 侧边栏
 - ✅ 全部 60+ 组件文档页面标题和描述
@@ -37,6 +37,10 @@
 - ✅ Registry 全部子页面（Getting Started、GitHub、Namespaces、Authentication、Schema）
 - ✅ Forms、Skills、MCP Server、Changelog
 - ✅ 所有组件示例描述、API 参考、无障碍说明
+- ✅ Blocks 所有演示区块数据（Dashboard、Sidebar、Login 等）
+- ✅ Charts 所有图表配置文本
+- ✅ Create 页面 & 预览 iframe 全部文本
+- ✅ 动态文本（Copy/Copied 等）
 
 ## 🔧 技术原理
 
@@ -56,6 +60,8 @@ DOM 加载 → 收集可见文本节点 → 字典查找 → 原地替换 → Mu
 ```
 shadcn-translator/
 ├── manifest.json            # 扩展清单 (Manifest V3)
+├── _locales/zh_CN/           # Chrome 商店本地化
+│   └── messages.json
 ├── content/                 # 内容脚本
 │   ├── content.js           # 字典翻译引擎 + 导航栏切换按钮
 │   └── content.css          # 翻译指示器样式
