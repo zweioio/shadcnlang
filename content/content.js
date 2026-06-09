@@ -194,8 +194,33 @@ function applyToNodes(nodes, originalText, translation) {
 
 // ─── 恢复原文 ────────────────────────────────────────
 
+/**
+ * 递归查找带有翻译标记的元素（穿透 Shadow DOM 和 iframe）
+ */
+function findTranslatedElements(root = document) {
+  const elements = [];
+  // 查找当前 root 中的标记元素
+  elements.push(...root.querySelectorAll(`[${ORIGINAL_TEXT_ATTR}]`));
+  // 查找 Shadow DOM
+  const hostElements = root.querySelectorAll('*');
+  for (const el of hostElements) {
+    if (el.shadowRoot) {
+      elements.push(...findTranslatedElements(el.shadowRoot));
+    }
+    if (el.tagName === 'IFRAME') {
+      try {
+        const doc = el.contentDocument || el.contentWindow?.document;
+        if (doc && doc.body) {
+          elements.push(...findTranslatedElements(doc));
+        }
+      } catch (e) { /* 跨域 iframe */ }
+    }
+  }
+  return elements;
+}
+
 function resetTranslation() {
-  const elements = document.querySelectorAll(`[${ORIGINAL_TEXT_ATTR}]`);
+  const elements = findTranslatedElements();
   for (const el of elements) {
     const originalText = el.getAttribute(ORIGINAL_TEXT_ATTR);
     if (originalText) {
@@ -457,7 +482,6 @@ function updateToggleButton(isActive) {
 // ─── 自动翻译（安装后自动执行） ──────────────────────
 
 async function autoTranslateOnLoad() {
-  // 等待页面稳定后自动翻译
   await new Promise(r => setTimeout(r, 100));
   await translatePageSingle('zh-CN');
   updateToggleButton(true);
@@ -466,10 +490,22 @@ async function autoTranslateOnLoad() {
   } catch (e) { /* ignore */ }
 }
 
+/**
+ * 多阶段翻译：覆盖延迟加载的 iframe / Shadow DOM / Portal 内容
+ */
+async function translateWithRetry() {
+  const delays = [800, 2000, 4000];
+  for (const delay of delays) {
+    await new Promise(r => setTimeout(r, delay));
+    if (!currentTargetLang) return; // 用户已切换回英文
+    await translatePageSingle('zh-CN');
+  }
+}
+
 // ─── 启动 ────────────────────────────────────────────
 
 try {
-  const boot = () => { setupNavigationObserver(); initToggleButton(); autoTranslateOnLoad(); };
+  const boot = () => { setupNavigationObserver(); initToggleButton(); autoTranslateOnLoad(); translateWithRetry(); };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
   } else {
