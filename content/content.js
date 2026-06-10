@@ -18,8 +18,22 @@ const MIN_TEXT_LENGTH = 2;
 
 let currentTargetLang = '';
 let dictionary = null;
+let reverseDict = null;
+let enMode = false;
 let observer = null;
 let shadowObservers = [];
+let translateBusy = false;
+let pendingToggle = null;
+
+function buildReverseDict() {
+  if (!dictionary) return;
+  reverseDict = {};
+  for (const [eng, chn] of Object.entries(dictionary)) {
+    if (chn && chn !== eng && !reverseDict[chn]) {
+      reverseDict[chn] = eng;
+    }
+  }
+}
 let translateTimeout = null;
 let lastUrl = location.href;
 
@@ -73,6 +87,7 @@ function loadDictionary(lang) {
   try {
     if (typeof SHADCN_DICT_ZH_CN !== 'undefined' && lang === 'zh-CN') {
       dictionary = flattenDict(SHADCN_DICT_ZH_CN);
+      buildReverseDict();
       return true;
     }
     console.error('[shadcn-translator] 字典未找到:', lang);
@@ -153,6 +168,40 @@ function collectTextNodes(root = document.body) {
 async function translatePageSingle(targetLang) {
   if (!targetLang) return { success: false, error: '未指定目标语言' };
 
+  // 英文模式：用反向字典将中文还原为英文
+  if (targetLang === 'en') {
+    if (!dictionary) loadDictionary('zh-CN');
+    if (!reverseDict) buildReverseDict();
+    if (!reverseDict) return { success: true, count: 0 };
+
+    const textNodes = collectTextNodes(document.body);
+    const textMap = new Map();
+    for (const node of textNodes) {
+      const text = node.textContent.trim();
+      if (!text) continue;
+      if (!textMap.has(text)) textMap.set(text, []);
+      textMap.get(text).push(node);
+    }
+
+    let restoredCount = 0;
+    for (const [text, nodes] of textMap.entries()) {
+      const english = reverseDict[text];
+      if (english && english !== text) {
+        for (const node of nodes) {
+          node.textContent = english;
+          const p = node.parentElement || node.parentNode;
+          if (p) {
+            p.removeAttribute(TRANSLATED_ATTR);
+            p.removeAttribute(ORIGINAL_TEXT_ATTR);
+          }
+        }
+        restoredCount++;
+      }
+    }
+    return { success: true, count: restoredCount };
+  }
+
+  // 中文模式：正向字典翻译
   if (targetLang !== currentTargetLang || !dictionary) {
     currentTargetLang = targetLang;
     loadDictionary(targetLang);
@@ -237,8 +286,18 @@ function resetTranslation() {
     el.removeAttribute(ORIGINAL_TEXT_ATTR);
     el.removeAttribute(TRANSLATED_ATTR);
   }
-  currentTargetLang = '';
-  dictionary = null;
+  // 兜底：遍历所有文本节点，清除漏网之鱼
+  const allTextWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let tn;
+  while ((tn = allTextWalker.nextNode())) {
+    const p = tn.parentElement;
+    if (p && (p.hasAttribute(TRANSLATED_ATTR) || p.hasAttribute(ORIGINAL_TEXT_ATTR))) {
+      p.removeAttribute(TRANSLATED_ATTR);
+      p.removeAttribute(ORIGINAL_TEXT_ATTR);
+    }
+  }
+  currentTargetLang = 'en';  // 设为英文模式
+  enMode = true;              // 标记英文模式，observer 会反向还原中文
   return { success: true };
 }
 
@@ -254,7 +313,7 @@ function observeElementAndShadow(el) {
   // 监听 shadow root 变化
   if (el.shadowRoot) {
     const shadowObs = new MutationObserver(() => {
-      if (currentTargetLang && dictionary) {
+      if (currentTargetLang && dictionary && !blockAutoTranslate) {
         clearTimeout(translateTimeout);
           translateTimeout = setTimeout(() => {
           translatePageSingle(currentTargetLang);
@@ -283,7 +342,7 @@ function setupNavigationObserver() {
   if (isInIframe) {
     // iframe 内监听 DOM + 文本变化
     observer = new MutationObserver(() => {
-      if (currentTargetLang && dictionary) {
+      if (currentTargetLang && dictionary && !blockAutoTranslate) {
         clearTimeout(translateTimeout);
         translateTimeout = setTimeout(() => translatePageSingle(currentTargetLang), 300);
       }
@@ -346,7 +405,7 @@ function setupNavigationObserver() {
       }
     }
 
-    if (shouldTranslate && currentTargetLang && dictionary) {
+    if (shouldTranslate && currentTargetLang && dictionary && !blockAutoTranslate) {
       translatePageSingle(currentTargetLang);
     }
   });
@@ -450,16 +509,40 @@ function initToggleButton() {
   </svg>`;
   toggleBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (currentTargetLang === 'zh-CN') {
-      resetTranslation();
-      updateToggleButton(false);
-      await chrome.storage.sync.set({ shadcn_translator_config: { enabled: false, targetLang: 'zh-CN' } });
-    } else {
-      await translatePageSingle('zh-CN');
-      updateToggleButton(true);
-      await chrome.storage.sync.set({ shadcn_translator_config: { enabled: true, targetLang: 'zh-CN' } });
+    // 防抖：如果正在翻译，记录待执行操作，完成后自动执行
+    if (translateBusy) {
+      pendingToggle = currentTargetLang === 'zh-CN' ? 'en' : 'zh-CN';
+      return;
     }
+    await doToggle();
   });
+
+  async function doToggle() {
+    translateBusy = true;
+    try {
+      if (currentTargetLang === 'zh-CN') {
+        resetTranslation();
+        enMode = true;
+        updateToggleButton(false);
+        await chrome.storage.sync.set({ shadcn_translator_config: { enabled: false, targetLang: 'zh-CN' } });
+        broadcastToIframes({ action: 'translateReset' });
+      } else {
+        enMode = false;
+        await translatePageSingle('zh-CN');
+        updateToggleButton(true);
+        await chrome.storage.sync.set({ shadcn_translator_config: { enabled: true, targetLang: 'zh-CN' } });
+        broadcastToIframes({ action: 'translateActivate' });
+      }
+    } finally {
+      translateBusy = false;
+      // 有挂起的切换请求，立即执行
+      if (pendingToggle) {
+        const next = pendingToggle;
+        pendingToggle = null;
+        await doToggle();
+      }
+    }
+  }
 
   // 恢复上次的翻译状态
   chrome.storage.sync.get('shadcn_translator_config').then(result => {
@@ -488,9 +571,47 @@ function updateToggleButton(isActive) {
   toggleBtn.title = isActive ? '切换为英文' : '切换为中文';
 }
 
+// ─── iframe 通信 ────────────────────────────────────
+
+/** 向当前页面所有 iframe 发送消息 */
+function broadcastToIframes(data) {
+  for (const iframe of document.querySelectorAll('iframe')) {
+    try {
+      iframe.contentWindow?.postMessage(data, '*');
+    } catch (e) { /* 跨域 iframe */ }
+  }
+}
+
+/** 接收父页面或同源 iframe 的状态同步消息 */
+let blockAutoTranslate = false;
+window.addEventListener('message', (event) => {
+  if (event.data?.action === 'translateReset') {
+    currentTargetLang = 'en';
+    enMode = true;
+    updateToggleButton(false);
+    blockAutoTranslate = true;
+    setTimeout(() => { blockAutoTranslate = false; }, 500);
+  }
+  if (event.data?.action === 'translateActivate') {
+    enMode = false;
+    blockAutoTranslate = false;
+    translatePageSingle('zh-CN');
+  }
+});
+
 // ─── 自动翻译（安装后自动执行） ──────────────────────
 
 async function autoTranslateOnLoad() {
+  // 检查用户之前是否手动切回了英文
+  try {
+    const result = await chrome.storage.sync.get('shadcn_translator_config');
+    const config = result.shadcn_translator_config || {};
+    if (config.enabled === false) {
+      // 用户之前切换回了英文，不自动翻译
+      updateToggleButton(false);
+      return;
+    }
+  } catch (e) { /* ignore */ }
   await new Promise(r => setTimeout(r, 100));
   await translatePageSingle('zh-CN');
   updateToggleButton(true);
@@ -503,10 +624,12 @@ async function autoTranslateOnLoad() {
  * 多阶段翻译：覆盖延迟加载的 iframe / Shadow DOM / Portal 内容
  */
 async function translateWithRetry() {
+  // 延迟后如果当前是英文模式则不翻译
   const delays = [800, 2000, 4000];
   for (const delay of delays) {
     await new Promise(r => setTimeout(r, delay));
-    if (!currentTargetLang) return; // 用户已切换回英文
+    if (blockAutoTranslate) return;
+    if (!currentTargetLang || currentTargetLang === 'en') return;
     await translatePageSingle('zh-CN');
   }
 }
