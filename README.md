@@ -1,4 +1,4 @@
-# shadcn中文
+# shadcn/ui 中文翻译扩展
 
 将 [shadcn/ui](https://ui.shadcn.com/) 官方文档自动翻译为简体中文的 Chrome 扩展。**安装即用，无需任何手动操作。**
 
