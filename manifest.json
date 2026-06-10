@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "shadcn 中文",
+  "name": "shadcn中文",
   "version": "4.0.0",
   "description": "安装即用，自动将 shadcn/ui 官方文档翻译为简体中文。内置 3000+ 翻译条目，零网络请求，毫秒级完成。",
   "default_locale": "zh_CN",

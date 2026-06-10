@@ -1,6 +1,6 @@
 {
   "appName": {
-    "message": "shadcn 中文"
+    "message": "shadcn中文"
   },
   "appDesc": {
     "message": "安装即用，自动将 shadcn/ui 官方文档翻译为简体中文。内置 3000+ 翻译条目，零网络请求，毫秒级完成。"
